@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetInsight - 网络分析平台</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶部导航 -->
+        <header class="header">
+            <div class="container">
+                <div class="header-content">
+                    <div class="logo">
+                        <i class="fas fa-network-wired"></i>
+                        <span>NetInsight</span>
+                    </div>
+                    <nav class="nav">
+                        <a href="#upload" class="nav-link active" data-section="upload">
+                            <i class="fas fa-upload"></i>
+                            文件上传
+                        </a>
+                        <a href="#analysis" class="nav-link" data-section="analysis">
+                            <i class="fas fa-chart-line"></i>
+                            分析结果
+                        </a>
+                        <a href="#history" class="nav-link" data-section="history">
+                            <i class="fas fa-history"></i>
+                            历史记录
+                        </a>
+                    </nav>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="main">
+            <div class="container">
+                <!-- 文件上传区域 -->
+                <section id="upload-section" class="section active">
+                    <div class="section-header">
+                        <h2><i class="fas fa-cloud-upload-alt"></i> 上传网络分析文件</h2>
+                        <p>支持 PCAP、CAP、PCAPNG、HAR 格式文件，无文件大小限制</p>
+                    </div>
+
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-content">
+                            <i class="fas fa-file-upload upload-icon"></i>
+                            <h3>拖拽文件到此处或点击上传</h3>
+                            <p>支持的格式：.pcap, .cap, .pcapng, .har</p>
+                            <button class="btn btn-primary" id="selectFileBtn">
+                                <i class="fas fa-folder-open"></i>
+                                选择文件
+                            </button>
+                        </div>
+                        <input type="file" id="fileInput" accept=".pcap,.cap,.pcapng,.har" multiple hidden>
+                    </div>
+
+                    <!-- 上传进度 -->
+                    <div class="upload-progress" id="uploadProgress" style="display: none;">
+                        <div class="progress-info">
+                            <span id="progressText">正在上传...</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                    </div>
+
+                    <!-- 队列状态 -->
+                    <div class="queue-status" id="queueStatus">
+                        <div class="status-item">
+                            <span class="status-label">队列状态:</span>
+                            <span class="status-value" id="queueInfo">等待中: 0 | 分析中: 0</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 分析结果区域 -->
+                <section id="analysis-section" class="section">
+                    <div class="section-header">
+                        <h2><i class="fas fa-chart-pie"></i> 分析结果</h2>
+                        <p>详细的网络性能分析报告</p>
+                    </div>
+
+                    <div class="analysis-content" id="analysisContent">
+                        <div class="empty-state">
+                            <i class="fas fa-chart-line empty-icon"></i>
+                            <h3>暂无分析结果</h3>
+                            <p>请先上传文件进行分析</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 历史记录区域 -->
+                <section id="history-section" class="section">
+                    <div class="section-header">
+                        <h2><i class="fas fa-clock"></i> 历史记录</h2>
+                        <p>查看所有已上传的文件和分析结果</p>
+                    </div>
+
+                    <div class="history-content" id="historyContent">
+                        <div class="loading" id="historyLoading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span>加载中...</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- 通知系统 -->
+        <div class="notifications" id="notifications"></div>
+
+        <!-- 分析详情模态框 -->
+        <div class="modal" id="analysisModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalTitle">分析结果详情</h3>
+                    <button class="modal-close" id="modalClose">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    <!-- 动态内容 -->
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="modalCloseBtn">关闭</button>
+                    <button class="btn btn-primary" id="exportBtn">
+                        <i class="fas fa-download"></i>
+                        导出报告
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html> 
