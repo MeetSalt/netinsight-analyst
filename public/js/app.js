@@ -219,6 +219,13 @@ class NetInsightApp {
     validateFile(file) {
         // 检查文件类型
         const validTypes = ['.pcap', '.cap', '.pcapng', '.har'];
+        
+        // 修复空值问题
+        if (!file || !file.name || typeof file.name !== 'string') {
+            this.showNotification('无效的文件对象', 'error');
+            return false;
+        }
+        
         const fileName = file.name.toLowerCase();
         const isValidType = validTypes.some(type => fileName.endsWith(type));
         
@@ -355,6 +362,7 @@ class NetInsightApp {
                     <p>请先上传文件进行分析</p>
                 </div>
             `;
+            document.getElementById('analysisSummary').innerHTML = '';
             return;
         }
 
@@ -379,13 +387,44 @@ class NetInsightApp {
         `;
 
         this.elements.historyContent.innerHTML = tableHTML;
+
+        // 新增：为每一行添加点击事件
+        const rows = this.elements.historyContent.querySelectorAll('tbody tr');
+        rows.forEach((row, idx) => {
+            const file = this.files[idx];
+            row.addEventListener('click', (e) => {
+                // 避免点击删除/重分析按钮时触发摘要加载
+                if (e.target.closest('button')) return;
+                this.showAnalysisSummary(file._id);
+            });
+        });
+
+        // 新增：为删除按钮绑定事件
+        const deleteBtns = this.elements.historyContent.querySelectorAll('button[data-action="delete"]');
+        deleteBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const fileId = btn.getAttribute('data-file-id');
+                this.deleteFile(fileId);
+            });
+        });
+
+        // 新增：为“查看完整分析报告”按钮绑定事件
+        const viewBtns = this.elements.historyContent.querySelectorAll('button[data-action="view-report"]');
+        viewBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const fileId = btn.getAttribute('data-file-id');
+                window.open(`/report.html?id=${fileId}`, '_blank');
+            });
+        });
     }
 
     renderFileRow(file) {
         const statusClass = this.getStatusClass(file.analysisStatus);
         const statusText = this.getStatusText(file.analysisStatus);
         const fileSize = this.formatFileSize(file.fileSize);
-                    const uploadTime = file.uploadedAt ? new Date(file.uploadedAt).toLocaleString('zh-CN') : '未记录';
+        const uploadTime = file.uploadedAt ? new Date(file.uploadedAt).toLocaleString('zh-CN') : '未记录';
 
         return `
             <tr>
@@ -406,8 +445,8 @@ class NetInsightApp {
                 <td>
                     <div style="display: flex; gap: 8px;">
                         ${file.analysisStatus === 'completed' ? `
-                            <button class="btn btn-primary btn-sm" data-action="view" data-file-id="${file._id}">
-                                <i class="fas fa-eye"></i> 查看结果
+                            <button class="btn btn-primary btn-sm" data-action="view-report" data-file-id="${file._id}">
+                                <i class="fas fa-file-alt"></i> 查看完整分析报告
                             </button>
                         ` : ''}
                         ${file.analysisStatus === 'pending' || file.analysisStatus === 'failed' ? `
@@ -627,9 +666,15 @@ class NetInsightApp {
             const file = this.files.find(f => f._id === fileId);
             const analysis = analysisResult.data.results;
 
+            // 保存当前分析数据供过滤器使用
+            this.currentAnalysisData = analysisResult.data;
+
             this.elements.modalTitle.textContent = `分析结果 - ${file?.originalName || '未知文件'}`;
             this.elements.modalBody.innerHTML = this.renderAnalysisDetails(analysis);
             this.showModal();
+            
+            // 绑定事件监听器
+            this.bindModalEventListeners();
 
         } catch (error) {
             console.error('查看分析失败:', error);
@@ -645,22 +690,27 @@ class NetInsightApp {
                     <h4 style="margin: 0 0 12px 0; color: #374151;">🔍 快速过滤</h4>
                     <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                         <select id="protocolFilter" style="padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: white;">
-                            <option value="">所有协议</option>
-                            ${(analysis.protocols || []).map(protocol => 
+                            <option value="all">所有协议</option>
+                            ${(analysis.protocols || []).filter(protocol => protocol && protocol.name && typeof protocol.name === 'string').map(protocol => 
                                 `<option value="${protocol.name}">${protocol.name} (${protocol.packets}包)</option>`
                             ).join('')}
+                            ${analysis.transport && analysis.transport.topPorts ? 
+                                analysis.transport.topPorts.filter(port => port && port.service && port.service !== 'Unknown' && typeof port.service === 'string').map(port => 
+                                    `<option value="${port.service}">${port.service} (${port.packets}包)</option>`
+                                ).join('') : ''
+                            }
                         </select>
                         <input type="text" id="ipFilter" placeholder="过滤IP地址..." style="padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; flex: 1; min-width: 200px;">
-                        <button onclick="app.applyFilters()" style="padding: 6px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer;">应用过滤</button>
-                        <button onclick="app.clearFilters()" style="padding: 6px 16px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer;">清除</button>
+                        <button id="applyFiltersBtn" data-action="apply" style="padding: 6px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer;">应用过滤</button>
+                        <button id="clearFiltersBtn" data-action="clear" style="padding: 6px 16px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer;">清除</button>
                     </div>
                 </div>
 
                 <!-- Top N 对话 - 杀手级功能 -->
                 <div style="margin-bottom: 24px;">
-                    <h4 style="color: #1f2937; margin-bottom: 16px;">💬 主要通信对话 (Top Conversations)</h4>
+                    <h4 style="color: #1f2937; margin-bottom: 16px;">💬 主要网络连接 (Top Connections)</h4>
                     <div class="top-conversations">
-                        ${this.renderTopConversations(analysis)}
+                        ${this.renderTopConnections(analysis.results || analysis)}
                     </div>
                 </div>
 
@@ -668,9 +718,12 @@ class NetInsightApp {
                 <div style="margin-bottom: 24px;">
                     <h4 style="color: #1f2937; margin-bottom: 16px;">🌐 协议分布</h4>
                     <div class="protocol-visualization">
-                        ${this.renderProtocolDistribution(analysis.protocols || [])}
+                        ${this.renderProtocolDistribution((analysis.results?.protocols) || analysis.protocols || [])}
                     </div>
                 </div>
+
+                <!-- 主机通信矩阵 - 第二阶段核心功能 -->
+                ${analysis.network ? this.renderCommunicationMatrix(analysis.network) : ''}
 
                 <!-- 基础统计 -->
                 <div style="margin-bottom: 24px;">
@@ -694,6 +747,9 @@ class NetInsightApp {
                         </div>
                     </div>
                 </div>
+
+                <!-- 时间线分析 - 第二阶段核心功能 -->
+                ${analysis.temporal ? this.renderTimelineAnalysis(analysis.temporal) : ''}
 
                 <!-- HTTP会话流重建 - 杀手级功能 -->
                 ${analysis.http_sessions && analysis.http_sessions.total_sessions > 0 ? `
@@ -760,69 +816,78 @@ class NetInsightApp {
     }
 
     // =========== 新增的渲染方法 ===========
-    renderTopConversations(analysis) {
-        const sources = analysis.network?.topSources || [];
-        const destinations = analysis.network?.topDestinations || [];
+    renderTopConnections(analysis) {
+        // 支持两种数据结构：原始数据和过滤后的数据
+        const connections = analysis.connections?.topConnections || [];
         
-        // 创建对话对 (简化版，实际应该基于完整的连接数据)
-        const conversations = [];
-        
-        // 合并源和目标IP，创建对话对
-        sources.forEach(source => {
-            destinations.forEach(dest => {
-                if (source.ip !== dest.ip) {
-                    conversations.push({
-                        source: source.ip,
-                        destination: dest.ip,
-                        packets: Math.min(source.packets, dest.packets),
-                        bytes: Math.min(source.bytes, dest.bytes),
-                        description: this.getConversationDescription(source.ip, dest.ip)
-                    });
-                }
-            });
-        });
-        
-        // 取前5个对话
-        const topConversations = conversations
-            .sort((a, b) => b.bytes - a.bytes)
-            .slice(0, 5);
-        
-        if (topConversations.length === 0) {
-            return '<div style="text-align: center; color: #6b7280; padding: 20px;">暂无通信对话数据</div>';
+        // 减少调试信息输出
+        if (connections.length === 0) {
+            console.log('🔍 连接数据为空');
         }
         
-        return topConversations.map((conv, index) => `
-            <div class="conversation-item" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 12px; background: white;">
-                <div style="display: flex; align-items: center; justify-content: between; margin-bottom: 8px;">
-                    <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
-                        <span style="background: #3b82f6; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold;">${index + 1}</span>
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600; color: #111827; margin-bottom: 4px;">
-                                <span style="color: #059669;">${conv.source}</span> 
-                                <i class="fas fa-exchange-alt" style="color: #6b7280; margin: 0 8px;"></i>
-                                <span style="color: #dc2626;">${conv.destination}</span>
+        if (connections.length === 0) {
+            return '<div style="text-align: center; color: #6b7280; padding: 20px;">暂无网络连接数据</div>';
+        }
+        
+        return connections.slice(0, 10).map((conn, index) => {
+            // 解析连接字符串 "IP:port->IP:port"
+            if (!conn || !conn.connection || typeof conn.connection !== 'string') {
+                return '<div style="color: #ef4444; padding: 8px;">连接数据格式错误</div>';
+            }
+            
+            const connectionParts = conn.connection.split('->');
+            if (connectionParts.length !== 2) {
+                return '<div style="color: #ef4444; padding: 8px;">连接格式错误: ' + conn.connection + '</div>';
+            }
+            
+            const [source, destination] = connectionParts;
+            const sourceParts = source.split(':');
+            const destParts = destination.split(':');
+            
+            if (sourceParts.length !== 2 || destParts.length !== 2) {
+                return '<div style="color: #ef4444; padding: 8px;">IP:Port格式错误</div>';
+            }
+            
+            const [sourceIP, sourcePort] = sourceParts;
+            const [destIP, destPort] = destParts;
+            
+            const description = this.getConversationDescription(sourceIP, destIP);
+            
+            return `
+                <div class="conversation-item" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 12px; background: white;">
+                    <div style="display: flex; align-items: center; justify-content: between; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+                            <span style="background: #3b82f6; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold;">${index + 1}</span>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #111827; margin-bottom: 4px;">
+                                    <span style="color: #059669;">${sourceIP}:${sourcePort}</span> 
+                                    <i class="fas fa-arrow-right" style="color: #6b7280; margin: 0 8px;"></i>
+                                    <span style="color: #dc2626;">${destIP}:${destPort}</span>
+                                </div>
+                                <div style="font-size: 13px; color: #6b7280;">${description}</div>
                             </div>
-                            <div style="font-size: 13px; color: #6b7280;">${conv.description}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-weight: 600; color: #374151;">${conn.packets} 包</div>
+                            <div style="font-size: 12px; color: #6b7280;">端口 ${sourcePort}→${destPort}</div>
                         </div>
                     </div>
-                    <div style="text-align: right;">
-                        <div style="font-weight: 600; color: #374151;">${this.formatFileSize(conv.bytes)}</div>
-                        <div style="font-size: 12px; color: #6b7280;">${conv.packets} 包</div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="analyze-conversation-btn" data-source="${sourceIP}" data-dest="${destIP}" style="padding: 4px 12px; font-size: 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; color: #374151;">
+                            <i class="fas fa-search"></i> 详细分析
+                        </button>
+                        <button class="filter-conversation-btn" data-source="${sourceIP}" data-dest="${destIP}" style="padding: 4px 12px; font-size: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; color: #1d4ed8;">
+                            <i class="fas fa-filter"></i> 过滤此连接
+                        </button>
                     </div>
                 </div>
-                <div style="display: flex; gap: 8px;">
-                    <button onclick="app.analyzeConversation('${conv.source}', '${conv.destination}')" style="padding: 4px 12px; font-size: 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; color: #374151;">
-                        <i class="fas fa-search"></i> 详细分析
-                    </button>
-                    <button onclick="app.filterByConversation('${conv.source}', '${conv.destination}')" style="padding: 4px 12px; font-size: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; color: #1d4ed8;">
-                        <i class="fas fa-filter"></i> 过滤此对话
-                    </button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
 
     renderProtocolDistribution(protocols) {
+        // 减少调试信息输出
+        
         if (!protocols || protocols.length === 0) {
             return '<div style="text-align: center; color: #6b7280; padding: 20px;">暂无协议数据</div>';
         }
@@ -1002,29 +1067,343 @@ class NetInsightApp {
         );
     }
 
-    // =========== 过滤功能 ===========
+    // =========== 🛠️ 修复过滤功能 - 智能过滤系统 ===========
     applyFilters() {
         const protocolFilter = document.getElementById('protocolFilter')?.value || '';
-        const ipFilter = document.getElementById('ipFilter')?.value || '';
+        const ipFilter = document.getElementById('ipFilter')?.value?.trim() || '';
         
-        console.log('应用过滤:', { protocolFilter, ipFilter });
-        this.showNotification(`过滤条件已应用: ${protocolFilter || '所有协议'} | ${ipFilter || '所有IP'}`, 'info');
+        console.log('🔍 应用过滤:', { protocolFilter, ipFilter });
         
-        // TODO: 实际的过滤逻辑将在后续版本中实现
-        // 这里应该重新渲染分析结果，只显示符合条件的数据
+        // 获取当前分析数据
+        const currentAnalysis = this.currentAnalysisData;
+        if (!currentAnalysis) {
+            this.showNotification('❌ 没有可过滤的数据', 'warning');
+            return;
+        }
+        
+        // 深拷贝原始数据
+        // 创建过滤后的数据副本 - 使用浅拷贝避免CSP问题
+        let filteredData = {
+            ...currentAnalysis,
+            results: currentAnalysis.results ? {
+                ...currentAnalysis.results,
+                protocols: currentAnalysis.results.protocols ? [...currentAnalysis.results.protocols] : [],
+                connections: currentAnalysis.results.connections ? {
+                    ...currentAnalysis.results.connections,
+                    topConnections: currentAnalysis.results.connections.topConnections ? 
+                        [...currentAnalysis.results.connections.topConnections] : []
+                } : {},
+                transport: currentAnalysis.results.transport ? {
+                    ...currentAnalysis.results.transport,
+                    topPorts: currentAnalysis.results.transport.topPorts ? 
+                        [...currentAnalysis.results.transport.topPorts] : []
+                } : {},
+                network: currentAnalysis.results.network ? {
+                    ...currentAnalysis.results.network,
+                    topSources: currentAnalysis.results.network.topSources ? 
+                        [...currentAnalysis.results.network.topSources] : [],
+                    topDestinations: currentAnalysis.results.network.topDestinations ? 
+                        [...currentAnalysis.results.network.topDestinations] : []
+                } : {}
+            } : {}
+        };
+        let hasActiveFilter = false;
+        let appliedFilters = [];
+        
+        // ✅ 协议过滤 - 修复逻辑
+        if (protocolFilter && typeof protocolFilter === 'string' && protocolFilter !== 'all' && protocolFilter.trim() !== '') {
+            hasActiveFilter = true;
+            appliedFilters.push(`协议: ${protocolFilter}`);
+            
+            // 过滤协议分布数据
+            if (filteredData.results && filteredData.results.protocols && Array.isArray(filteredData.results.protocols)) {
+                const originalCount = filteredData.results.protocols.length;
+                const filterLower = protocolFilter.toLowerCase();
+                filteredData.results.protocols = filteredData.results.protocols.filter(p => {
+                    if (!p || !p.name || typeof p.name !== 'string') return false;
+                    try {
+                        const protocolName = p.name.toLowerCase();
+                        // 更宽松的匹配：包含匹配或精确匹配
+                        return protocolName.includes(filterLower) || protocolName === filterLower || filterLower.includes(protocolName);
+                    } catch (error) {
+                        console.warn('协议名称处理错误:', p.name, error);
+                        return false;
+                    }
+                });
+                console.log(`📊 协议过滤: ${originalCount} -> ${filteredData.results.protocols.length}`);
+            }
+            
+            // 根据协议过滤传输层数据
+            if (filteredData.results && filteredData.results.transport && filteredData.results.transport.topPorts && Array.isArray(filteredData.results.transport.topPorts)) {
+                const originalCount = filteredData.results.transport.topPorts.length;
+                try {
+                    const filterLower = protocolFilter.toLowerCase();
+                    // 根据不同协议过滤端口
+                    if (filterLower === 'https') {
+                        filteredData.results.transport.topPorts = filteredData.results.transport.topPorts.filter(port => 
+                            port && (port.port === 443 || (port.service && typeof port.service === 'string' && port.service.toLowerCase().includes('https')))
+                        );
+                    } else if (filterLower === 'http') {
+                        filteredData.results.transport.topPorts = filteredData.results.transport.topPorts.filter(port => 
+                            port && (port.port === 80 || (port.service && typeof port.service === 'string' && port.service.toLowerCase().includes('http')))
+                        );
+                    }
+                    console.log(`🚪 端口过滤: ${originalCount} -> ${filteredData.results.transport.topPorts.length}`);
+                } catch (error) {
+                    console.warn('传输层数据过滤错误:', error);
+                }
+            }
+        }
+        
+        // ✅ IP过滤 - 修复逻辑
+        if (ipFilter && ipFilter.trim() !== '') {
+            hasActiveFilter = true;
+            appliedFilters.push(`IP: ${ipFilter}`);
+            const filterIPs = ipFilter.split(',').map(ip => ip.trim()).filter(ip => ip);
+            
+            if (filterIPs.length > 0) {
+                let totalFiltered = 0;
+                
+                // 过滤连接数据
+                if (filteredData.results.connections && filteredData.results.connections.topConnections) {
+                    const originalCount = filteredData.results.connections.topConnections.length;
+                    filteredData.results.connections.topConnections = filteredData.results.connections.topConnections.filter(conn => {
+                        if (!conn || !conn.connection || typeof conn.connection !== 'string') return false;
+                        const connectionString = conn.connection;
+                        return filterIPs.some(filterIP => connectionString.includes(filterIP));
+                    });
+                    totalFiltered += (originalCount - filteredData.results.connections.topConnections.length);
+                }
+                
+                // 过滤网络数据
+                if (filteredData.results.network) {
+                    if (filteredData.results.network.topSources) {
+                        const originalCount = filteredData.results.network.topSources.length;
+                        filteredData.results.network.topSources = filteredData.results.network.topSources.filter(s => 
+                            s && s.ip && typeof s.ip === 'string' && filterIPs.some(ip => s.ip.includes(ip))
+                        );
+                        totalFiltered += (originalCount - filteredData.results.network.topSources.length);
+                    }
+                    if (filteredData.results.network.topDestinations) {
+                        const originalCount = filteredData.results.network.topDestinations.length;
+                        filteredData.results.network.topDestinations = filteredData.results.network.topDestinations.filter(d => 
+                            d && d.ip && typeof d.ip === 'string' && filterIPs.some(ip => d.ip.includes(ip))
+                        );
+                        totalFiltered += (originalCount - filteredData.results.network.topDestinations.length);
+                    }
+                }
+                
+                console.log(`🌐 IP过滤完成，共过滤 ${totalFiltered} 条记录`);
+            }
+        }
+        
+        // ✅ 重新渲染分析结果
+        this.renderFilteredAnalysis(filteredData);
+        
+        // ✅ 改进通知消息
+        if (hasActiveFilter) {
+            this.showNotification(`✅ 过滤已应用: ${appliedFilters.join(' | ')}`, 'success');
+        } else {
+            this.showNotification('ℹ️ 未设置过滤条件，显示所有数据', 'info');
+        }
     }
 
+    // ✅ 修复清除功能
     clearFilters() {
-        if (document.getElementById('protocolFilter')) {
-            document.getElementById('protocolFilter').value = '';
+        console.log('🧹 清除过滤条件');
+        
+        // 清除表单值
+        const protocolFilter = document.getElementById('protocolFilter');
+        const ipFilter = document.getElementById('ipFilter');
+        
+        if (protocolFilter) {
+            protocolFilter.value = 'all';
         }
-        if (document.getElementById('ipFilter')) {
-            document.getElementById('ipFilter').value = '';
+        if (ipFilter) {
+            ipFilter.value = '';
         }
         
-        this.showNotification('过滤条件已清除', 'info');
+        // 重新渲染原始数据
+        if (this.currentAnalysisData) {
+            // 确保使用完整的原始数据
+            console.log('📊 恢复原始数据显示');
+            this.renderFilteredAnalysis(this.currentAnalysisData);
+        } else {
+            console.error('❌ 无法恢复原始数据：currentAnalysisData 为空');
+        }
         
-        // TODO: 重新加载完整数据
+        this.showNotification('🧹 过滤条件已清除，显示所有数据', 'success');
+    }
+
+    // 渲染过滤后的分析结果
+    renderFilteredAnalysis(analysisData) {
+        const modalBody = document.getElementById('modalBody');
+        if (!modalBody) return;
+        
+        // 重新渲染分析详情
+        modalBody.innerHTML = this.renderAnalysisDetails(analysisData);
+        
+        // 重新绑定事件监听器
+        this.bindModalEventListeners();
+    }
+
+    // 绑定模态框内的事件监听器
+    bindModalEventListeners() {
+        // 移除已有的事件监听器，避免重复绑定
+        const modalBody = document.getElementById('modalBody');
+        if (modalBody) {
+            // 使用事件委托，避免重复绑定
+            modalBody.removeEventListener('click', this.modalEventHandler);
+            modalBody.addEventListener('click', this.modalEventHandler.bind(this));
+        }
+    }
+
+    // 模态框内的事件处理器
+    modalEventHandler(e) {
+        const target = e.target;
+        const button = target.closest('button');
+        const element = target.closest('[data-flow-key], [data-issue-type], .connection-cell, .http-session-row, .insight-item');
+        
+        // 处理按钮点击
+        if (button) {
+            e.stopPropagation(); // 防止事件冒泡
+            
+            const action = button.id || button.dataset.action;
+            
+            switch (action) {
+                case 'applyFiltersBtn':
+                    this.applyFilters();
+                    break;
+                case 'clearFiltersBtn':
+                    this.clearFilters();
+                    break;
+                case 'applyTimeFilterBtn':
+                    this.applyTimeFilter();
+                    break;
+                case 'clearTimeFilterBtn':
+                    this.clearTimeFilter();
+                    break;
+                default:
+                    if (button.classList.contains('analyze-conversation-btn')) {
+                        const sourceIP = button.dataset.source;
+                        const destIP = button.dataset.dest;
+                        this.analyzeConversation(sourceIP, destIP);
+                    } else if (button.classList.contains('filter-conversation-btn')) {
+                        const sourceIP = button.dataset.source;
+                        const destIP = button.dataset.dest;
+                        this.filterByConversation(sourceIP, destIP);
+                    } else if (button.classList.contains('session-details-btn')) {
+                        const flowKey = button.dataset.flowKey;
+                        const sessionIndex = button.dataset.sessionIndex;
+                        this.viewHttpSessionDetails(flowKey, sessionIndex);
+                    }
+                    break;
+            }
+            return;
+        }
+        
+        // 处理其他元素点击
+        if (element) {
+            if (element.classList.contains('http-session-row')) {
+                const flowKey = element.dataset.flowKey;
+                const sessionIndex = element.dataset.sessionIndex;
+                this.viewHttpSessionDetails(flowKey, sessionIndex);
+            } else if (element.classList.contains('insight-item')) {
+                const issueType = element.dataset.issueType;
+                const issueTitle = element.dataset.issueTitle;
+                const issueDescription = element.dataset.issueDescription;
+                const issueSeverity = element.dataset.issueSeverity;
+                
+                // 重构issue对象，避免JSON.parse
+                const issueData = {
+                    type: issueType,
+                    title: issueTitle,
+                    description: issueDescription,
+                    severity: issueSeverity
+                };
+                this.showInsightDetails(issueType, issueData);
+            } else if (element.classList.contains('connection-cell')) {
+                const sourceIP = element.dataset.sourceIp;
+                const destIP = element.dataset.destIp;
+                const connectionBytes = parseInt(element.dataset.connectionBytes) || 0;
+                const connectionPackets = parseInt(element.dataset.connectionPackets) || 0;
+                const connectionType = element.dataset.connectionType;
+                
+                // 重构connection对象，避免JSON.parse
+                const connection = {
+                    bytes: connectionBytes,
+                    packets: connectionPackets,
+                    connectionType: connectionType
+                };
+                this.showConnectionDetails(sourceIP, destIP, connection);
+            }
+        }
+    }
+    
+    // 实现时间过滤功能
+    applyTimeFilter() {
+        const startTime = document.getElementById('timeStart')?.value;
+        const endTime = document.getElementById('timeEnd')?.value;
+        
+        if (!startTime || !endTime) {
+            this.showNotification('请选择完整的时间范围', 'warning');
+            return;
+        }
+        
+        const currentAnalysis = this.currentAnalysisData;
+        if (!currentAnalysis) {
+            this.showNotification('没有可过滤的数据', 'warning');
+            return;
+        }
+        
+        const startTimestamp = new Date(startTime).getTime() / 1000;
+        const endTimestamp = new Date(endTime).getTime() / 1000;
+        
+        console.log('时间过滤:', { startTime, endTime, startTimestamp, endTimestamp });
+        
+        // 应用时间过滤器
+        let filteredData = { ...currentAnalysis };
+        
+        // 过滤流量事件
+        if (filteredData.results.temporal && filteredData.results.temporal.trafficEvents) {
+            filteredData.results.temporal.trafficEvents = filteredData.results.temporal.trafficEvents.filter(event => {
+                const eventTime = new Date(event.timestamp).getTime() / 1000;
+                return eventTime >= startTimestamp && eventTime <= endTimestamp;
+            });
+        }
+        
+        // 过滤时间线数据
+        if (filteredData.results.temporal && filteredData.results.temporal.trafficTimeline) {
+            filteredData.results.temporal.trafficTimeline = filteredData.results.temporal.trafficTimeline.filter((data, index) => {
+                // 根据时间线索引计算时间戳
+                const temporal = filteredData.results.temporal;
+                const bucketDuration = temporal.bucketSize || 60; // 默认60秒
+                const startTimeValue = new Date(temporal.startTime).getTime() / 1000;
+                const bucketTime = startTimeValue + (index * bucketDuration);
+                return bucketTime >= startTimestamp && bucketTime <= endTimestamp;
+            });
+        }
+        
+        // 重新渲染分析结果
+        this.renderFilteredAnalysis(filteredData);
+        
+        this.showNotification(`时间过滤已应用: ${startTime} 到 ${endTime}`, 'success');
+    }
+
+    clearTimeFilter() {
+        if (document.getElementById('timeStart')) {
+            document.getElementById('timeStart').value = '';
+        }
+        if (document.getElementById('timeEnd')) {
+            document.getElementById('timeEnd').value = '';
+        }
+        
+        // 重新渲染原始数据
+        if (this.currentAnalysisData) {
+            this.renderFilteredAnalysis(this.currentAnalysisData);
+        }
+        
+        this.showNotification('时间过滤已清除', 'info');
     }
 
     analyzeConversation(sourceIP, destIP) {
@@ -1194,10 +1573,10 @@ class NetInsightApp {
         
         return `
             <div class="http-session-row" 
+                 data-flow-key="${session.flow_key || ''}"
+                 data-session-index="${index}"
                  style="display: grid; grid-template-columns: 60px 80px 1fr 120px 80px 100px 80px; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: background-color 0.2s;"
-                 onmouseover="this.style.backgroundColor='#f9fafb'"
-                 onmouseout="this.style.backgroundColor='white'"
-                 onclick="app.viewHttpSessionDetails('${session.flow_key || ''}', ${index})">
+
                 
                 <!-- 序号 -->
                 <div style="font-size: 13px; color: #6b7280; font-weight: 500;">${index + 1}</div>
@@ -1235,7 +1614,9 @@ class NetInsightApp {
                 
                 <!-- 操作 -->
                 <div>
-                    <button onclick="event.stopPropagation(); app.viewHttpSessionDetails('${session.flow_key || ''}', ${index})" 
+                    <button class="session-details-btn"
+                            data-flow-key="${session.flow_key || ''}"
+                            data-session-index="${index}" 
                             style="padding: 4px 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; color: #1d4ed8; font-size: 11px;">
                         <i class="fas fa-eye"></i> 详情
                     </button>
@@ -1379,10 +1760,13 @@ class NetInsightApp {
         const severityConfig = this.getSeverityConfig(issue.severity);
         
         return `
-            <div style="padding: 12px; border: 1px solid #f3f4f6; border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;"
-                 onmouseover="this.style.backgroundColor='#f9fafb'; this.style.borderColor='${accentColor}'"
-                 onmouseout="this.style.backgroundColor='white'; this.style.borderColor='#f3f4f6'"
-                 onclick="app.showInsightDetails('${issue.type}', ${JSON.stringify(issue).replace(/'/g, '\\\'')})">
+            <div class="insight-item"
+                 data-issue-type="${issue.type}"
+                 data-issue-title="${issue.title || ''}"
+                 data-issue-description="${issue.description || ''}"
+                 data-issue-severity="${issue.severity || 'medium'}"
+                 style="padding: 12px; border: 1px solid #f3f4f6; border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;"
+
                 
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <span style="font-weight: 500; color: #111827; font-size: 13px;">${issue.title}</span>
@@ -1437,6 +1821,659 @@ class NetInsightApp {
         // TODO: 实现详细信息模态框
         this.showNotification(`查看${issue.title}的详细信息`, 'info');
         console.log('Insight Details:', type, issue);
+    }
+
+    // =========== 时间线分析 - 第二阶段核心功能 ===========
+    renderTimelineAnalysis(temporal) {
+        if (!temporal || !temporal.trafficTimeline || temporal.trafficTimeline.length === 0) {
+            return '';
+        }
+
+        const timeline = temporal.trafficTimeline;
+        const events = temporal.trafficEvents || [];
+        
+        // 计算最大流量，用于图表缩放
+        const maxRate = Math.max(...timeline.map(point => point.rate));
+        const maxPackets = Math.max(...timeline.map(point => point.packets));
+        
+        return `
+            <div style="margin-bottom: 24px;">
+                <h4 style="color: #1f2937; margin-bottom: 16px;">📈 时间线分析 (Timeline Analysis)</h4>
+                
+                <!-- 时间线摘要 -->
+                <div style="background: rgba(59, 130, 246, 0.05); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; align-items: center;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${temporal.duration ? (temporal.duration / 60).toFixed(1) : 0}分
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">分析时长</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${new Date(temporal.startTime).toLocaleTimeString()}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">开始时间</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${this.formatFileSize(temporal.peakTrafficRate || 0)}/s
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">峰值流量</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${events.length}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">流量事件</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 流量时间线图表 -->
+                <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                    <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">📊 流量变化趋势</h5>
+                    <div class="timeline-chart" style="position: relative; height: 200px; margin-bottom: 16px;">
+                        ${this.renderTrafficChart(timeline, maxRate)}
+                    </div>
+                    
+                    <!-- 时间轴 -->
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; margin-top: 8px;">
+                        <span>${new Date(temporal.startTime).toLocaleTimeString()}</span>
+                        <span>流量趋势</span>
+                        <span>${new Date(temporal.endTime).toLocaleTimeString()}</span>
+                    </div>
+                </div>
+
+                <!-- 协议时间线 -->
+                ${temporal.protocolTimeline ? this.renderProtocolTimeline(temporal.protocolTimeline) : ''}
+
+                <!-- 流量事件 -->
+                ${events.length > 0 ? this.renderTrafficEvents(events) : ''}
+
+                <!-- 时间范围过滤器 -->
+                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <span style="font-size: 13px; color: #374151; font-weight: 500;">⏰ 时间过滤:</span>
+                        <input type="datetime-local" id="timeStart" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;">
+                        <span style="color: #6b7280;">到</span>
+                        <input type="datetime-local" id="timeEnd" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;">
+                        <button id="applyTimeFilterBtn" data-action="applyTime" style="padding: 4px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            <i class="fas fa-filter"></i> 应用
+                        </button>
+                        <button id="clearTimeFilterBtn" data-action="clearTime" style="padding: 4px 12px; background: #6b7280; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            清除
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderTrafficChart(timeline, maxRate) {
+        if (!timeline || timeline.length === 0) return '';
+        
+        const chartWidth = 100; // 百分比宽度  
+        const chartHeight = 180; // 图表高度
+        
+        // 生成SVG路径点
+        const points = timeline.map((point, index) => {
+            const x = (index / (timeline.length - 1)) * chartWidth;
+            const y = chartHeight - (point.rate / maxRate) * chartHeight;
+            return `${x},${y}`;
+        }).join(' ');
+        
+        // 生成面积填充路径
+        const areaPath = `M0,${chartHeight} L${points} L${chartWidth},${chartHeight} Z`;
+        
+        return `
+            <svg width="100%" height="${chartHeight}" style="position: absolute; top: 0; left: 0;">
+                <!-- 网格线 -->
+                <defs>
+                    <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#f1f5f9" stroke-width="0.5"/>
+                    </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#grid)" />
+                
+                <!-- 面积图 -->
+                <path d="${areaPath}" fill="rgba(59, 130, 246, 0.1)" stroke="none"/>
+                
+                <!-- 线条 -->
+                <polyline points="${points}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                
+                <!-- 数据点 -->
+                ${timeline.map((point, index) => {
+                    const x = (index / (timeline.length - 1)) * chartWidth;
+                    const y = chartHeight - (point.rate / maxRate) * chartHeight;
+                    return `<circle cx="${x}%" cy="${y}" r="3" fill="#3b82f6" opacity="0.8">
+                        <title>${this.formatFileSize(point.rate)}/s 在 ${new Date(point.timestamp * 1000).toLocaleTimeString()}</title>
+                    </circle>`;
+                }).join('')}
+            </svg>
+        `;
+    }
+
+    renderProtocolTimeline(protocolTimeline) {
+        const protocols = Object.keys(protocolTimeline).filter(protocol => 
+            protocolTimeline[protocol] && protocolTimeline[protocol].length > 0
+        );
+        
+        if (protocols.length === 0) return '';
+        
+        const colors = {
+            'TCP': '#3b82f6',
+            'UDP': '#10b981', 
+            'ICMP': '#f59e0b',
+            'ARP': '#8b5cf6'
+        };
+
+        return `
+            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">🔄 协议时间分布</h5>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                    ${protocols.map(protocol => `
+                        <div style="padding: 12px; background: #f9fafb; border-radius: 6px;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                                <div style="width: 12px; height: 12px; background: ${colors[protocol] || '#6b7280'}; border-radius: 50%;"></div>
+                                <span style="font-weight: 500; color: #374151; font-size: 13px;">${protocol}</span>
+                            </div>
+                            <div style="height: 40px; position: relative;">
+                                ${this.renderMiniChart(protocolTimeline[protocol], colors[protocol] || '#6b7280')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    renderMiniChart(data, color) {
+        if (!data || data.length === 0) return '';
+        
+        const maxPackets = Math.max(...data.map(point => point.packets));
+        if (maxPackets === 0) return '';
+        
+        const points = data.map((point, index) => {
+            const x = (index / (data.length - 1)) * 100;
+            const y = 40 - (point.packets / maxPackets) * 35;
+            return `${x},${y}`;
+        }).join(' ');
+        
+        return `
+            <svg width="100%" height="40" style="position: absolute; top: 0; left: 0;">
+                <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+            </svg>
+        `;
+    }
+
+    renderTrafficEvents(events) {
+        const eventsByType = {
+            'traffic_spike': events.filter(e => e.type === 'traffic_spike'),
+            'quiet_period': events.filter(e => e.type === 'quiet_period')
+        };
+
+        return `
+            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">⚡ 流量事件检测</h5>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px;">
+                    ${eventsByType.traffic_spike.length > 0 ? `
+                        <div>
+                            <h6 style="color: #ef4444; margin-bottom: 8px; font-size: 13px; font-weight: 600;">
+                                🔺 流量突增 (${eventsByType.traffic_spike.length})
+                            </h6>
+                            ${eventsByType.traffic_spike.slice(0, 3).map(event => `
+                                <div style="padding: 8px; background: rgba(239, 68, 68, 0.05); border-left: 3px solid #ef4444; border-radius: 4px; margin-bottom: 6px;">
+                                    <div style="font-size: 12px; color: #374151; font-weight: 500; margin-bottom: 2px;">
+                                        ${new Date(event.timestamp * 1000).toLocaleTimeString()}
+                                    </div>
+                                    <div style="font-size: 11px; color: #6b7280;">
+                                        ${event.description}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                    
+                    ${eventsByType.quiet_period.length > 0 ? `
+                        <div>
+                            <h6 style="color: #6b7280; margin-bottom: 8px; font-size: 13px; font-weight: 600;">
+                                🔻 安静期 (${eventsByType.quiet_period.length})
+                            </h6>
+                            ${eventsByType.quiet_period.slice(0, 3).map(event => `
+                                <div style="padding: 8px; background: rgba(107, 114, 128, 0.05); border-left: 3px solid #6b7280; border-radius: 4px; margin-bottom: 6px;">
+                                    <div style="font-size: 12px; color: #374151; font-weight: 500; margin-bottom: 2px;">
+                                        ${new Date(event.timestamp * 1000).toLocaleTimeString()}
+                                    </div>
+                                    <div style="font-size: 11px; color: #6b7280;">
+                                        ${event.description}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    // 修复IP地址显示 - 显示完整IP地址
+    formatIP(ip) {
+        // 始终显示完整的IP地址
+        return ip;
+    }
+
+    // 格式化数字显示
+    formatNumber(num) {
+        if (num >= 1000000) {
+            return (num / 1000000).toFixed(1) + 'M';
+        } else if (num >= 1000) {
+            return (num / 1000).toFixed(1) + 'K';
+        }
+        return num.toString();
+    }
+
+    // =========== 主机通信矩阵 - 第二阶段核心功能 ===========
+    renderCommunicationMatrix(network) {
+        if (!network || !network.topSources || !network.topDestinations) {
+            return '';
+        }
+
+        const sources = network.topSources.slice(0, 5);
+        const destinations = network.topDestinations.slice(0, 5);
+        
+        // 创建通信强度矩阵
+        const matrix = this.buildCommunicationMatrix(sources, destinations);
+        
+        return `
+            <div style="margin-bottom: 24px;">
+                <h4 style="color: #1f2937; margin-bottom: 16px;">🔗 主机通信矩阵 (Communication Matrix)</h4>
+                
+                <!-- 矩阵摘要 -->
+                <div style="background: rgba(16, 185, 129, 0.05); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; align-items: center;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${network.uniqueSourceIPs || 0}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">源主机</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${network.uniqueDestinationIPs || 0}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">目标主机</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${matrix.totalConnections}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">活跃连接</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 4px;">
+                                ${this.formatFileSize(matrix.totalBytes)}
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280;">总流量</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 交互式通信矩阵 -->
+                <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                    <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">📊 通信强度热力图</h5>
+                    <div class="communication-matrix" style="overflow-x: auto;">
+                        ${this.renderMatrixTable(sources, destinations, matrix.data)}
+                    </div>
+                </div>
+
+                <!-- 网络拓扑视图 -->
+                <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                    <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">🌐 网络拓扑图</h5>
+                    <div class="network-topology" style="height: 300px; position: relative; background: #f9fafb; border-radius: 6px;">
+                        ${this.renderNetworkTopology(sources, destinations, matrix.data)}
+                    </div>
+                </div>
+
+                <!-- 连接详情 -->
+                <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                    <h5 style="color: #374151; margin-bottom: 12px; font-size: 14px; font-weight: 600;">📋 连接详情</h5>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                            <h6 style="color: #6b7280; margin-bottom: 8px; font-size: 13px; font-weight: 600;">🔄 主要源主机</h6>
+                            ${this.renderHostList(sources, 'source')}
+                        </div>
+                        <div>
+                            <h6 style="color: #6b7280; margin-bottom: 8px; font-size: 13px; font-weight: 600;">🎯 主要目标主机</h6>
+                            ${this.renderHostList(destinations, 'destination')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    buildCommunicationMatrix(sources, destinations) {
+        const matrixData = {};
+        let totalConnections = 0;
+        let totalBytes = 0;
+
+        // 创建通信强度数据 (模拟数据，实际应基于真实连接信息)
+        sources.forEach(source => {
+            matrixData[source.ip] = {};
+            destinations.forEach(dest => {
+                if (source.ip !== dest.ip) {
+                    // 基于流量大小计算通信强度
+                    const strength = Math.min(source.bytes, dest.bytes) / Math.max(source.bytes, dest.bytes);
+                    const connectionBytes = Math.floor(Math.min(source.bytes, dest.bytes) * strength);
+                    
+                    matrixData[source.ip][dest.ip] = {
+                        strength: strength,
+                        bytes: connectionBytes,
+                        packets: Math.floor(Math.min(source.packets, dest.packets) * strength),
+                        connectionType: this.getConnectionType(source.ip, dest.ip)
+                    };
+                    
+                    totalConnections++;
+                    totalBytes += connectionBytes;
+                }
+            });
+        });
+
+        return {
+            data: matrixData,
+            totalConnections,
+            totalBytes
+        };
+    }
+
+    renderMatrixTable(sources, destinations, matrixData) {
+        if (!sources.length || !destinations.length) {
+            return '<div style="text-align: center; color: #6b7280; padding: 20px;">暂无通信数据</div>';
+        }
+
+        const maxStrength = Math.max(...sources.flatMap(source => 
+            destinations.map(dest => matrixData[source.ip]?.[dest.ip]?.strength || 0)
+        ));
+
+        return `
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <thead>
+                    <tr>
+                        <th style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; text-align: left; width: 140px;">
+                            源主机 \\ 目标主机
+                        </th>
+                        ${destinations.map(dest => `
+                            <th style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; text-align: center; min-width: 80px;">
+                                <div style="writing-mode: vertical-rl; text-orientation: mixed;">
+                                    ${this.formatIP(dest.ip)}
+                                </div>
+                            </th>
+                        `).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${sources.map(source => `
+                        <tr>
+                            <td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: 500;">
+                                ${this.formatIP(source.ip)}
+                            </td>
+                            ${destinations.map(dest => {
+                                const connection = matrixData[source.ip]?.[dest.ip];
+                                if (!connection || source.ip === dest.ip) {
+                                    return `<td style="padding: 8px; border: 1px solid #e5e7eb; background: #f8f9fa; text-align: center;">-</td>`;
+                                }
+                                
+                                const intensity = connection.strength / maxStrength;
+                                const color = this.getConnectionColor(intensity);
+                                
+                                return `
+                                    <td class="connection-cell"
+                                        data-source-ip="${source.ip}"
+                                        data-dest-ip="${dest.ip}"
+                                        data-connection-bytes="${connection.bytes || 0}"
+                                        data-connection-packets="${connection.packets || 0}"
+                                        data-connection-type="${connection.connectionType || 'unknown'}"
+                                        style="padding: 4px; border: 1px solid #e5e7eb; text-align: center; background: ${color}; cursor: pointer;"
+                                        title="流量: ${this.formatFileSize(connection.bytes)} | 包数: ${connection.packets} | 类型: ${connection.connectionType}">
+                                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 2px;">
+                                            ${this.formatFileSize(connection.bytes)}
+                                        </div>
+                                        <div style="font-size: 10px; color: #6b7280;">
+                                            ${connection.packets}包
+                                        </div>
+                                    </td>
+                                `;
+                            }).join('')}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            
+            <!-- 颜色图例 -->
+            <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 11px;">
+                <span style="color: #6b7280;">通信强度:</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div style="width: 12px; height: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid #e5e7eb;"></div>
+                    <span>低</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div style="width: 12px; height: 12px; background: rgba(59, 130, 246, 0.5); border: 1px solid #e5e7eb;"></div>
+                    <span>中</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div style="width: 12px; height: 12px; background: rgba(59, 130, 246, 0.8); border: 1px solid #e5e7eb;"></div>
+                    <span>高</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderNetworkTopology(sources, destinations, matrixData) {
+        // 简化的网络拓扑图 - 使用SVG绘制
+        const centerX = 50;
+        const centerY = 50;
+        const radius = 35;
+        
+        // 计算节点位置
+        const sourceNodes = sources.map((source, index) => ({
+            ...source,
+            x: centerX + radius * Math.cos((index / sources.length) * 2 * Math.PI),
+            y: centerY + radius * Math.sin((index / sources.length) * 2 * Math.PI),
+            type: 'source'
+        }));
+        
+        const destNodes = destinations.map((dest, index) => ({
+            ...dest,
+            x: centerX + (radius * 0.6) * Math.cos(((index + 0.5) / destinations.length) * 2 * Math.PI + Math.PI),
+            y: centerY + (radius * 0.6) * Math.sin(((index + 0.5) / destinations.length) * 2 * Math.PI + Math.PI),
+            type: 'destination'
+        }));
+        
+        const allNodes = [...sourceNodes, ...destNodes];
+        
+        return `
+            <svg width="100%" height="100%" viewBox="0 0 100 100">
+                <!-- 连接线 -->
+                ${sourceNodes.flatMap(source => 
+                    destNodes.map(dest => {
+                        const connection = matrixData[source.ip]?.[dest.ip];
+                        if (!connection) return '';
+                        
+                        const opacity = Math.min(connection.strength * 2, 1);
+                        const strokeWidth = Math.max(connection.strength * 3, 0.2);
+                        
+                        return `
+                            <line x1="${source.x}%" y1="${source.y}%" 
+                                  x2="${dest.x}%" y2="${dest.y}%" 
+                                  stroke="#3b82f6" stroke-width="${strokeWidth}" 
+                                  opacity="${opacity}"
+                                  stroke-dasharray="${connection.connectionType === 'external' ? '2,2' : ''}">
+                                <title>${this.formatIP(source.ip)} → ${this.formatIP(dest.ip)}: ${this.formatFileSize(connection.bytes)}</title>
+                            </line>
+                        `;
+                    })
+                ).join('')}
+                
+                <!-- 节点 -->
+                ${allNodes.map(node => `
+                    <circle cx="${node.x}%" cy="${node.y}%" r="${Math.max(node.bytes / 1000000, 0.5)}%" 
+                            fill="${node.type === 'source' ? '#10b981' : '#ef4444'}" 
+                            stroke="white" stroke-width="0.3" opacity="0.8">
+                        <title>${this.formatIP(node.ip)}: ${this.formatFileSize(node.bytes)}</title>
+                    </circle>
+                    <text x="${node.x}%" y="${node.y + 4}%" 
+                          text-anchor="middle" font-size="2" fill="#1f2937" font-weight="500">
+                        ${this.formatIP(node.ip)}
+                    </text>
+                `).join('')}
+            </svg>
+            
+            <!-- 图例 -->
+            <div style="position: absolute; top: 8px; right: 8px; background: rgba(255, 255, 255, 0.9); padding: 8px; border-radius: 4px; font-size: 11px; border: 1px solid #e5e7eb;">
+                <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">
+                    <div style="width: 8px; height: 8px; background: #10b981; border-radius: 50%;"></div>
+                    <span>源主机</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">
+                    <div style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%;"></div>
+                    <span>目标主机</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div style="width: 12px; height: 1px; background: #3b82f6; border-style: dashed;"></div>
+                    <span>外部连接</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderHostList(hosts, type) {
+        return hosts.map((host, index) => `
+            <div style="padding: 8px; background: ${index % 2 === 0 ? '#f9fafb' : 'white'}; border-radius: 4px; margin-bottom: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 500; color: #374151; font-size: 13px; margin-bottom: 2px;">
+                            ${this.formatIP(host.ip)}
+                        </div>
+                        <div style="font-size: 11px; color: #6b7280;">
+                            ${this.getHostType(host.ip)} | ${this.getLocationInfo(host.ip)}
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-weight: 600; color: #1f2937; font-size: 12px;">
+                            ${this.formatFileSize(host.bytes)}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">
+                            ${host.packets} 包
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // 辅助方法
+    getConnectionColor(intensity) {
+        if (intensity < 0.3) return 'rgba(59, 130, 246, 0.1)';
+        if (intensity < 0.6) return 'rgba(59, 130, 246, 0.3)';
+        if (intensity < 0.8) return 'rgba(59, 130, 246, 0.5)';
+        return 'rgba(59, 130, 246, 0.8)';
+    }
+
+    getConnectionType(sourceIP, destIP) {
+        const isSourcePrivate = this.isPrivateIP(sourceIP);
+        const isDestPrivate = this.isPrivateIP(destIP);
+        
+        if (isSourcePrivate && isDestPrivate) return 'internal';
+        if (!isSourcePrivate && !isDestPrivate) return 'external';
+        return 'mixed';
+    }
+
+
+
+    getHostType(ip) {
+        return this.isPrivateIP(ip) ? '内网' : '外网';
+    }
+
+    getLocationInfo(ip) {
+        // 简化的位置信息，实际应该使用GeoIP数据库
+        if (this.isPrivateIP(ip)) {
+            return '本地网络';
+        }
+        return '远程主机';
+    }
+
+    showConnectionDetails(sourceIP, destIP, connection) {
+        this.showNotification(`查看连接详情: ${sourceIP} → ${destIP}`, 'info');
+        // TODO: 实现连接详情模态框
+        console.log('Connection Details:', sourceIP, destIP, connection);
+    }
+
+    // 新增：展示分析摘要卡片
+    async showAnalysisSummary(fileId) {
+        const summaryDiv = document.getElementById('analysisSummary');
+        summaryDiv.innerHTML = '<div style="text-align:center;padding:32px;"><i class="fas fa-spinner fa-spin"></i> 加载中...</div>';
+        try {
+            const result = await this.apiCall(`/api/analysis/${fileId}`);
+            if (!result.success) throw new Error('获取分析结果失败');
+            const file = this.files.find(f => f._id === fileId);
+            const analysis = result.data.results;
+            const topProtocols = (analysis.protocols || []).slice(0, 3);
+            const anomaliesCount = (analysis.anomalies || []).length;
+            const topConversationsCount = Math.min(
+                (analysis.network?.topSources || []).length * 
+                (analysis.network?.topDestinations || []).length, 
+                5
+            );
+            summaryDiv.innerHTML = `
+                <div class="analysis-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 16px; padding: 0; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);">
+                    <div style="padding: 24px; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px);">
+                        <div class="analysis-header" style="margin-bottom: 20px;">
+                            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                <i class="fas fa-file-alt" style="font-size: 18px; opacity: 0.9;"></i>
+                                <div class="analysis-title" style="font-size: 18px; font-weight: 600;">${file.originalName}</div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div class="analysis-status" style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; border: 1px solid rgba(16, 185, 129, 0.3);">
+                                    <i class="fas fa-check-circle"></i>
+                                    分析完成
+                                </div>
+                                <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px;">
+                                    ${new Date(file.uploadedAt).toLocaleString()}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background: rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.95);">🚀 一眼看懂</h4>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px;">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 20px; font-weight: 700; margin-bottom: 4px;">${this.formatFileSize(analysis.summary?.totalBytes || 0)}</div>
+                                    <div style="font-size: 12px; opacity: 0.8;">总流量</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 20px; font-weight: 700; margin-bottom: 4px;">${topProtocols.length}</div>
+                                    <div style="font-size: 12px; opacity: 0.8;">主要协议</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 20px; font-weight: 700; margin-bottom: 4px;">${topConversationsCount}</div>
+                                    <div style="font-size: 12px; opacity: 0.8;">通信对话</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #facc15;">${anomaliesCount}</div>
+                                    <div style="font-size: 12px; opacity: 0.8;">发现问题</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 16px;">
+                            <span style="font-size: 13px; color: #facc15; font-weight: 600;">${anomaliesCount > 0 ? `⚠️ 发现 ${anomaliesCount} 个问题` : '网络健康'}</span>
+                            <span style="margin-left: 16px; color: #a5b4fc; font-size: 13px;">网络活动: ${(analysis.summary?.pps || 0).toFixed(1)} 包/秒</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            summaryDiv.innerHTML = `<div style="color:#ef4444; text-align:center; padding:32px;">加载摘要失败: ${error.message}</div>`;
+        }
     }
 }
 

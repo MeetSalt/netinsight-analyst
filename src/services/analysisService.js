@@ -70,9 +70,15 @@ class AnalysisQueue {
       // 执行分析
       const results = await this.runAnalysis(file, analysis.config);
       
-      // 保存分析结果
+      // 保存分析结果 - 确保所有字段都被保存
+      logger.info('保存前的temporal字段:', Object.keys(results.temporal || {}));
       analysis.results = results;
+      analysis.markModified('results'); // 强制标记为已修改
       await analysis.updateStatus('completed');
+      
+      // 验证保存后的数据
+      const savedAnalysis = await Analysis.findById(analysis._id);
+      logger.info('保存后的temporal字段:', Object.keys(savedAnalysis.results.temporal || {}));
       
       // 更新文件状态
       await file.updateAnalysisStatus('completed');
@@ -143,6 +149,9 @@ class AnalysisQueue {
         if (code === 0) {
           try {
             const results = JSON.parse(stdout);
+            // 调试日志：检查temporal字段
+            logger.info('Python输出的temporal字段:', Object.keys(results.temporal || {}));
+            logger.info('trafficTimeline长度:', (results.temporal?.trafficTimeline || []).length);
             resolve(results);
           } catch (error) {
             reject(new Error(`解析分析结果失败: ${error.message}`));

@@ -819,4 +819,30 @@ body {
         align-items: flex-start;
         gap: 8px;
     }
+}
+
+/* =========== 修复CSP问题的CSS样式 =========== */
+.http-session-row:hover {
+    background-color: #f9fafb !important;
+}
+
+.insight-item:hover {
+    background-color: #f9fafb !important;
+    border-color: #3b82f6 !important;
+}
+
+.connection-cell:hover {
+    opacity: 0.8;
+    transform: scale(1.02);
+}
+
+/* 防止CSP错误的通用样式 */
+.clickable-item {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.clickable-item:hover {
+    background-color: #f9fafb;
+    transform: translateY(-1px);
 } 

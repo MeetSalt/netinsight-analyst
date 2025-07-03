@@ -75,17 +75,29 @@ const analysisSchema = new mongoose.Schema({
       }]
     },
 
-    // 时间分析
+    // 时间分析 - 第二阶段核心功能
     temporal: {
       startTime: Date,
       endTime: Date,
+      duration: Number,
+      bucketSize: Number,
       peakTrafficTime: Date,
       peakTrafficRate: Number, // bytes/sec
       timeDistribution: [{
         timestamp: Date,
         packets: Number,
-        bytes: Number
-      }]
+        bytes: Number,
+        rate: Number,
+        protocols: mongoose.Schema.Types.Mixed
+      }],
+      trafficTimeline: [{
+        timestamp: Date,
+        packets: Number,
+        bytes: Number,
+        rate: Number
+      }],
+      protocolTimeline: mongoose.Schema.Types.Mixed,
+      trafficEvents: [mongoose.Schema.Types.Mixed]
     },
 
     // 性能指标
@@ -165,7 +177,9 @@ const analysisSchema = new mongoose.Schema({
   reportPath: String,
   reportGeneratedAt: Date
 }, {
-  timestamps: true
+  timestamps: true,
+  strict: false, // 允许保存Schema中未定义的字段
+  strictQuery: false
 });
 
 // 索引优化

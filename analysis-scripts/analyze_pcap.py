@@ -32,6 +32,7 @@ def analyze_pcap(file_path, config):
             "protocols": analyze_protocols(packets),
             "network": analyze_network(packets),
             "transport": analyze_transport(packets),
+            "temporal": analyze_temporal(packets),  # 新增：时间线分析
             "connections": analyze_connections(packets),
             "http_sessions": analyze_http_sessions(packets),  # 新增HTTP会话分析
             "anomalies": detect_anomalies(packets),
@@ -267,6 +268,176 @@ def analyze_transport(packets):
         "connectionAttempts": tcp_flags.get("SYN", 0),
         "connectionResets": tcp_flags.get("RST", 0)
     }
+
+def analyze_temporal(packets):
+    """时间线分析 - 第二阶段核心功能"""
+    import math
+    from datetime import datetime
+    
+    timestamps = []
+    time_data = []
+    protocol_timeline = defaultdict(list)
+    traffic_timeline = []
+    
+    # 收集所有时间戳
+    for pkt in packets:
+        if hasattr(pkt, 'time'):
+            timestamps.append(float(pkt.time))
+    
+    if not timestamps:
+        return {
+            "startTime": None,
+            "endTime": None,
+            "timeDistribution": [],
+            "trafficTimeline": [],
+            "protocolTimeline": {},
+            "peakTrafficTime": None,
+            "trafficEvents": []
+        }
+    
+    # 计算时间范围
+    start_time = min(timestamps)
+    end_time = max(timestamps)
+    duration = end_time - start_time
+    
+    # 创建时间桶（每5秒一个桶，最多100个桶）
+    if duration > 0:
+        bucket_size = max(5.0, duration / 100)  # 至少5秒一个桶
+        num_buckets = int(duration / bucket_size) + 1
+    else:
+        bucket_size = 5.0
+        num_buckets = 1
+    
+    # 初始化时间桶
+    time_buckets = [0] * num_buckets
+    byte_buckets = [0] * num_buckets
+    protocol_buckets = [defaultdict(int) for _ in range(num_buckets)]
+    
+    # 填充时间桶数据
+    for pkt in packets:
+        if hasattr(pkt, 'time'):
+            pkt_time = float(pkt.time)
+            bucket_index = min(int((pkt_time - start_time) / bucket_size), num_buckets - 1)
+            
+            time_buckets[bucket_index] += 1
+            byte_buckets[bucket_index] += len(pkt)
+            
+            # 协议分类
+            protocol = "Other"
+            if IP in pkt:
+                if TCP in pkt:
+                    protocol = "TCP"
+                elif UDP in pkt:
+                    protocol = "UDP"
+                elif ICMP in pkt:
+                    protocol = "ICMP"
+            elif ARP in pkt:
+                protocol = "ARP"
+            
+            protocol_buckets[bucket_index][protocol] += 1
+    
+    # 构建时间线数据
+    timeline_data = []
+    max_traffic = 0
+    peak_time_index = 0
+    
+    for i in range(num_buckets):
+        bucket_time = start_time + (i * bucket_size)
+        packets_in_bucket = time_buckets[i]
+        bytes_in_bucket = byte_buckets[i]
+        
+        if bytes_in_bucket > max_traffic:
+            max_traffic = bytes_in_bucket
+            peak_time_index = i
+        
+        timeline_data.append({
+            "timestamp": bucket_time,
+            "packets": packets_in_bucket,
+            "bytes": bytes_in_bucket,
+            "rate": bytes_in_bucket / bucket_size if bucket_size > 0 else 0,  # bytes/sec
+            "protocols": dict(protocol_buckets[i])
+        })
+    
+    # 检测流量事件（异常高峰、安静期等）
+    traffic_events = detect_traffic_events(timeline_data, bucket_size)
+    
+    # 构建协议时间线
+    protocol_timeline_data = {}
+    for protocol in ["TCP", "UDP", "ICMP", "ARP"]:
+        protocol_timeline_data[protocol] = [
+            {
+                "timestamp": bucket_time,
+                "packets": protocol_buckets[i].get(protocol, 0)
+            }
+            for i, bucket_time in enumerate([start_time + (i * bucket_size) for i in range(num_buckets)])
+        ]
+    
+    return {
+        "startTime": datetime.fromtimestamp(start_time).isoformat(),
+        "endTime": datetime.fromtimestamp(end_time).isoformat(),
+        "duration": duration,
+        "bucketSize": bucket_size,
+        "timeDistribution": timeline_data,
+        "trafficTimeline": [
+            {
+                "timestamp": data["timestamp"],
+                "bytes": data["bytes"],
+                "packets": data["packets"],
+                "rate": data["rate"]
+            }
+            for data in timeline_data
+        ],
+        "protocolTimeline": protocol_timeline_data,
+        "peakTrafficTime": datetime.fromtimestamp(start_time + (peak_time_index * bucket_size)).isoformat(),
+        "peakTrafficRate": max_traffic / bucket_size if bucket_size > 0 else 0,
+        "trafficEvents": traffic_events
+    }
+
+def detect_traffic_events(timeline_data, bucket_size):
+    """检测流量事件"""
+    if len(timeline_data) < 3:
+        return []
+    
+    events = []
+    rates = [data["rate"] for data in timeline_data]
+    avg_rate = sum(rates) / len(rates)
+    
+    # 检测高峰事件（超过平均值2倍）
+    for i, data in enumerate(timeline_data):
+        if data["rate"] > avg_rate * 2 and avg_rate > 0:
+            events.append({
+                "type": "traffic_spike",
+                "timestamp": data["timestamp"],
+                "severity": "high" if data["rate"] > avg_rate * 5 else "medium",
+                "description": f"流量突增：{data['rate']:.1f} bytes/sec（平均值的{data['rate']/avg_rate:.1f}倍）",
+                "details": {
+                    "rate": data["rate"],
+                    "average_rate": avg_rate,
+                    "packets": data["packets"]
+                }
+            })
+    
+    # 检测安静期（低于平均值的20%，且持续多个时间桶）
+    quiet_start = None
+    for i, data in enumerate(timeline_data):
+        if data["rate"] < avg_rate * 0.2:
+            if quiet_start is None:
+                quiet_start = i
+        else:
+            if quiet_start is not None and (i - quiet_start) >= 3:
+                events.append({
+                    "type": "quiet_period",
+                    "timestamp": timeline_data[quiet_start]["timestamp"],
+                    "severity": "low",
+                    "description": f"网络安静期：持续{(i - quiet_start) * bucket_size:.1f}秒",
+                    "details": {
+                        "duration": (i - quiet_start) * bucket_size,
+                        "avg_rate_during_period": sum(timeline_data[j]["rate"] for j in range(quiet_start, i)) / (i - quiet_start)
+                    }
+                })
+            quiet_start = None
+    
+    return events
 
 def analyze_connections(packets):
     """连接分析"""
