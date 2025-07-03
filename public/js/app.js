@@ -2,13 +2,6 @@
 
 class NetInsightApp {
     constructor() {
-        this.init();
-        this.bindEvents();
-        this.loadInitialData();
-        this.startPeriodicUpdates();
-    }
-
-    init() {
         // API 基础 URL
         this.API_BASE = '';
         
@@ -58,7 +51,13 @@ class NetInsightApp {
             notifications: document.getElementById('notifications')
         };
         
-        console.log('NetInsight 应用初始化完成');
+        this.init();
+    }
+
+    init() {
+        this.bindEvents();
+        this.loadInitialData();
+        this.startPeriodicUpdates();
     }
 
     bindEvents() {
@@ -409,7 +408,7 @@ class NetInsightApp {
             });
         });
 
-        // 新增：为“查看完整分析报告”按钮绑定事件
+        // 新增：为"查看完整分析报告"按钮绑定事件
         const viewBtns = this.elements.historyContent.querySelectorAll('button[data-action="view-report"]');
         viewBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -822,7 +821,7 @@ class NetInsightApp {
         
         // 减少调试信息输出
         if (connections.length === 0) {
-            console.log('🔍 连接数据为空');
+    
         }
         
         if (connections.length === 0) {
@@ -1072,7 +1071,7 @@ class NetInsightApp {
         const protocolFilter = document.getElementById('protocolFilter')?.value || '';
         const ipFilter = document.getElementById('ipFilter')?.value?.trim() || '';
         
-        console.log('🔍 应用过滤:', { protocolFilter, ipFilter });
+
         
         // 获取当前分析数据
         const currentAnalysis = this.currentAnalysisData;
@@ -1130,7 +1129,7 @@ class NetInsightApp {
                         return false;
                     }
                 });
-                console.log(`📊 协议过滤: ${originalCount} -> ${filteredData.results.protocols.length}`);
+    
             }
             
             // 根据协议过滤传输层数据
@@ -1148,7 +1147,7 @@ class NetInsightApp {
                             port && (port.port === 80 || (port.service && typeof port.service === 'string' && port.service.toLowerCase().includes('http')))
                         );
                     }
-                    console.log(`🚪 端口过滤: ${originalCount} -> ${filteredData.results.transport.topPorts.length}`);
+    
                 } catch (error) {
                     console.warn('传输层数据过滤错误:', error);
                 }
@@ -1193,7 +1192,7 @@ class NetInsightApp {
                     }
                 }
                 
-                console.log(`🌐 IP过滤完成，共过滤 ${totalFiltered} 条记录`);
+        
             }
         }
         
@@ -1210,7 +1209,7 @@ class NetInsightApp {
 
     // ✅ 修复清除功能
     clearFilters() {
-        console.log('🧹 清除过滤条件');
+
         
         // 清除表单值
         const protocolFilter = document.getElementById('protocolFilter');
@@ -1226,7 +1225,7 @@ class NetInsightApp {
         // 重新渲染原始数据
         if (this.currentAnalysisData) {
             // 确保使用完整的原始数据
-            console.log('📊 恢复原始数据显示');
+    
             this.renderFilteredAnalysis(this.currentAnalysisData);
         } else {
             console.error('❌ 无法恢复原始数据：currentAnalysisData 为空');
@@ -1359,7 +1358,7 @@ class NetInsightApp {
         const startTimestamp = new Date(startTime).getTime() / 1000;
         const endTimestamp = new Date(endTime).getTime() / 1000;
         
-        console.log('时间过滤:', { startTime, endTime, startTimestamp, endTimestamp });
+
         
         // 应用时间过滤器
         let filteredData = { ...currentAnalysis };
@@ -1659,7 +1658,7 @@ class NetInsightApp {
         
         // TODO: 实现HTTP会话详情模态框
         // 这里可以显示完整的请求/响应头部、body等详细信息
-        console.log('HTTP Session Details:', flowKey, sessionIndex);
+
     }
 
     // =========== 智能诊断引擎界面方法 ===========
@@ -1820,7 +1819,7 @@ class NetInsightApp {
     showInsightDetails(type, issue) {
         // TODO: 实现详细信息模态框
         this.showNotification(`查看${issue.title}的详细信息`, 'info');
-        console.log('Insight Details:', type, issue);
+
     }
 
     // =========== 时间线分析 - 第二阶段核心功能 ===========
@@ -2406,7 +2405,7 @@ class NetInsightApp {
     showConnectionDetails(sourceIP, destIP, connection) {
         this.showNotification(`查看连接详情: ${sourceIP} → ${destIP}`, 'info');
         // TODO: 实现连接详情模态框
-        console.log('Connection Details:', sourceIP, destIP, connection);
+
     }
 
     // 新增：展示分析摘要卡片
