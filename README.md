@@ -1,7 +1,7 @@
 # NetInsight - 智能网络分析平台
 
 <div align="center">
-  <img src="https://img.shields.io/badge/Version-v1.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Node.js-18+-green.svg" alt="Node.js">
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/Docker-Ready-brightgreen.svg" alt="Docker">
@@ -35,9 +35,11 @@
 
 ### 📊 可视化分析
 - **协议分布可视化**：动态条形图 + SVG饼图，协议占比一目了然
-- **Top N对话**：智能识别最重要的通 信关系，自动分类内网↔外网流量
+- **时间线分析视图**：流量时间序列图、事件标记、协议时间分布
+- **主机通信矩阵**：交互式热力图、网络拓扑图、连接强度可视化
+- **Top N对话**：智能识别最重要的通信关系，自动分类内网↔外网流量
 - **网络活动热点**：自动识别最活跃的源IP和目标IP设备
-- **智能过滤系统**：直观的协议和IP过滤，无需学习复杂语法
+- **智能过滤系统**：多维度过滤（协议、IP、时间），数据类型安全检查
 
 ## 🛠️ 技术栈
 
@@ -69,7 +71,7 @@
 ### 一键部署
 ```bash
 # 克隆项目
-git clone https://github.com/jlingjace/netinsight-analyst.git
+git clone https://github.com/MeetSalt/netinsight-analyst.git
 cd netinsight-analyst
 
 # 启动所有服务
@@ -109,7 +111,8 @@ netinsight-analyst/
 ├── 📂 public/                # 前端静态文件
 │   ├── 📂 css/               # 样式文件
 │   ├── 📂 js/                # JavaScript文件
-│   └── index.html            # 主页面
+│   ├── index.html            # 主页面
+│   └── report.html           # 独立报告页面
 ├── 📂 analysis-scripts/      # Python分析脚本
 │   ├── analyze_pcap.py       # PCAP文件分析
 │   └── analyze_har.py        # HAR文件分析
@@ -129,12 +132,19 @@ netinsight-analyst/
 - **HAR** - 浏览器导出的HTTP Archive文件
 
 ### 2. 查看分析结果
+- **历史记录页面**：查看所有上传文件的分析状态和摘要信息
 - **一眼看懂模块**：总流量、主要协议、通信对话、发现问题
-- **HTTP会话流重建**：完整的请求/响应对展示
 - **智能诊断引擎**：AI发现的问题和优化建议
 - **协议分布可视化**：直观的饼图和柱状图
 
-### 3. 深度分析
+### 3. 独立报告页面
+- **完整分析报告**：点击"查看完整分析报告"进入专业报告页面
+- **HTTP会话流重建**：完整的请求/响应对展示，类似开发者工具
+- **时间线分析**：流量时间序列图、协议时间分布、事件标记
+- **主机通信矩阵**：交互式热力图、网络拓扑图、连接详情
+- **智能过滤系统**：协议、IP、时间多维度过滤，实时数据筛选
+
+### 4. 深度分析
 - **Top N对话**：查看最重要的网络通信
 - **安全审计**：检查明文传输、敏感信息泄露
 - **性能优化**：发现慢查询、缓存问题、资源优化机会
@@ -339,9 +349,9 @@ ANALYSIS_TIMEOUT=300000      # 分析超时时间(5分钟)
 
 ## 📞 联系我们
 
-- **项目主页**: https://github.com/jlingjace/netinsight-analyst
-- **问题反馈**: [Issues](https://github.com/jlingjace/netinsight-analyst/issues)
-- **功能建议**: [Discussions](https://github.com/jlingjace/netinsight-analyst/discussions)
+- **项目主页**: https://github.com/MeetSalt/netinsight-analyst
+- **问题反馈**: [Issues](https://github.com/MeetSalt/netinsight-analyst/issues)
+- **功能建议**: [Discussions](https://github.com/MeetSalt/netinsight-analyst/discussions)
 
 ---
 
@@ -351,6 +361,15 @@ ANALYSIS_TIMEOUT=300000      # 分析超时时间(5分钟)
 </div>
 
 ## 最新更新
+
+- ✅ **过滤功能错误修复** (2025-01-04) 🔧 **系统稳定性提升**
+  - **数据类型安全检查**：添加Array.isArray()和typeof验证，防止filter方法调用错误
+  - **null值处理优化**：修复协议过滤中的null值toLowerCase错误
+  - **字符串类型验证**：为所有字符串字段添加类型检查，提升过滤稳定性
+  - **IP过滤增强**：改进IP过滤的数据类型验证，支持多IP地址过滤
+  - **时间过滤优化**：增强时间过滤的错误处理，防止无效时间戳
+  - **调试功能完善**：优化过滤功能的调试日志输出，便于问题定位
+  - **故障排除文档**：在README中添加详细的故障排除指南
 
 - ✅ **独立报告页面上线** (2025-01-03) 🎯 **产品架构优化**
   - **独立报告页面**：全新的report.html页面，提供完整的网络分析报告展示
